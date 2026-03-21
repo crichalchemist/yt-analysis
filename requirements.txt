@@ -1,3 +1,7 @@
+# YouTube Channel Corpus Analyzer Dependencies
+# Install directly from GitHub:
+# pip install -r https://raw.githubusercontent.com/crichalchemist/yt-analysis/main/requirements.txt
+
 yt-dlp>=2024.3.10
 webvtt-py>=0.5.1
 anthropic>=0.34.0

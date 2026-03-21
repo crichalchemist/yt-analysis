@@ -7,6 +7,7 @@ A Python tool that analyzes entire YouTube channel catalogs by extracting transc
 - **Data Acquisition**: Pull complete channel video catalogs with transcripts using yt-dlp
 - **Corpus Indexing**: Store and query video data using DuckDB
 - **Feature Extraction**: Analyze transcripts using Claude to extract structured patterns
+- **Visual Analysis**: Analyze thumbnails for body language, facial expressions, and visual hooks
 - **Constitution Synthesis**: Generate comprehensive markdown reports of channel patterns
 - **MCP Integration**: Use as an MCP server in Claude Desktop for interactive analysis
 
@@ -17,6 +18,20 @@ A Python tool that analyzes entire YouTube channel catalogs by extracting transc
 - Anthropic API key
 
 ## Installation
+
+### Quick Install (Recommended)
+
+One-line install from GitHub:
+```bash
+curl -sL https://raw.githubusercontent.com/crichalchemist/yt-analysis/main/install.sh | bash
+```
+
+Or install dependencies directly:
+```bash
+pip install -r https://raw.githubusercontent.com/crichalchemist/yt-analysis/main/requirements.txt
+```
+
+### Manual Install
 
 1. Clone the repository:
 ```bash
@@ -140,6 +155,8 @@ CREATE TABLE videos (
 ### Extracted Features
 
 For each video, the following features are extracted:
+
+**Text Analysis (from transcript):**
 - `hook_type`: question, stat, story, contrast, or void
 - `hook_text`: First two sentences of transcript
 - `structure`: Array of section labels
@@ -148,6 +165,14 @@ For each video, the following features are extracted:
 - `key_claims`: List of 3-5 main claims
 - `topic_category`: Primary topic
 - `estimated_retention_signal`: low, medium, or high
+
+**Visual Analysis (from thumbnail when available):**
+- `visual_hook_elements`: List of visual elements (text overlays, facial expressions, objects, colors)
+- `body_language`: Description of presenter's body language and emotional state
+- `visual_context`: Setting, production quality, and visual storytelling elements
+- `thumbnail_effectiveness`: low, medium, or high based on visual appeal and clarity
+
+> Note: Visual analysis automatically falls back to text-only mode if thumbnails are unavailable.
 
 ### Constitution Sections
 
@@ -169,10 +194,10 @@ The generated constitution includes:
 ## Cost Estimates
 
 For a typical channel with 173 videos:
-- Input tokens: ~1.04M
-- Output tokens: ~173K
+- **Text-only mode**: Input tokens: ~1.04M, Output tokens: ~173K
+- **With visual analysis**: Input tokens: ~1.2M (includes image encoding), Output tokens: ~260K
 - Synthesis: ~50K input + 4K output
-- **Estimated cost: $6-8 USD** (using Claude Sonnet 4.5)
+- **Estimated cost: $8-12 USD** (using Claude Sonnet 4.5 with visual analysis)
 
 Note: Consider using Anthropic's batch API for 50% cost reduction on large channels.
 
