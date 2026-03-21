@@ -1,0 +1,9 @@
+{
+  "name": "yt-analysis",
+  "version": "1.0.0",
+  "description": "Analyze YouTube channel catalogs: pull transcripts, extract structured features with Claude, synthesize a content constitution.",
+  "author": "crichalchemist",
+  "repository": "https://github.com/crichalchemist/yt-analysis",
+  "license": "MIT",
+  "keywords": ["youtube", "transcript", "analysis", "content-strategy", "claude"]
+}

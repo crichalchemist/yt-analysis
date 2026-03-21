@@ -5,6 +5,7 @@ Extracts structured features from video transcripts and visual content using Ant
 
 import json
 import base64
+import datetime
 from typing import Dict, Optional, List
 from anthropic import Anthropic
 import duckdb
@@ -14,6 +15,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+RETRY_QUEUE_FILENAME: str = "retry_queue.jsonl"
 
 EXTRACTION_PROMPT = """Analyze this YouTube video transcript and metadata.
 
@@ -226,6 +228,85 @@ def extract_features(record: Dict, client: Anthropic, use_vision: bool = True) -
         return None
 
 
+def process_retry_queue(
+    conn: duckdb.DuckDBPyConnection,
+    client: Anthropic,
+    output_dir: str,
+) -> int:
+    """
+    Re-attempt feature extraction for all entries in retry_queue.jsonl.
+
+    Entries recovered successfully are written to features.jsonl with
+    source="retry_queue" and removed from the queue file. Entries that
+    still fail are left in place for the next run.
+
+    Why separate from main loop: keeps the hot path clean and makes
+    retry behaviour observable as a distinct log segment.
+    """
+    from index import update_features  # avoid circular import at module top
+
+    output_path = Path(output_dir)
+    retry_file = output_path / RETRY_QUEUE_FILENAME
+
+    if not retry_file.exists():
+        return 0
+
+    raw_lines = retry_file.read_text(encoding="utf-8").splitlines()
+    entries: list[Dict] = []
+    for line in raw_lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            logger.warning(f"Corrupt retry_queue entry skipped: {line[:120]}")
+
+    if not entries:
+        retry_file.unlink(missing_ok=True)
+        return 0
+
+    logger.info(f"Retrying {len(entries)} queued videos")
+
+    recovered_ids: set[str] = set()
+    log_file = output_path / "features.jsonl"
+
+    for entry in entries:
+        video_id = entry.get("video_id")
+        features = extract_features(entry, client)
+
+        if features:
+            features_json = json.dumps(features)
+            update_features(conn, video_id, features_json)
+
+            log_entry = {
+                "video_id": video_id,
+                "title": entry.get("title"),
+                "views": entry.get("views"),
+                "features": features,
+                "source": "retry_queue",
+            }
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(log_entry) + "\n")
+
+            recovered_ids.add(video_id)
+            logger.info(f"Retry recovered: {video_id}")
+        else:
+            logger.error(f"Retry still failed for {video_id}")
+
+    # Rewrite queue with only unrecovered entries
+    remaining = [e for e in entries if e.get("video_id") not in recovered_ids]
+    if remaining:
+        retry_file.write_text(
+            "\n".join(json.dumps(e) for e in remaining) + "\n",
+            encoding="utf-8",
+        )
+    else:
+        retry_file.unlink(missing_ok=True)
+
+    return len(recovered_ids)
+
+
 def extract_all(conn: duckdb.DuckDBPyConnection, client: Anthropic, output_dir: str) -> int:
     """
     Extract features for all videos without features in the database.
@@ -236,7 +317,7 @@ def extract_all(conn: duckdb.DuckDBPyConnection, client: Anthropic, output_dir: 
         output_dir: Directory to write features.jsonl log
 
     Returns:
-        Number of records processed
+        Number of records processed (including retry recoveries)
     """
     from index import get_records_without_features, update_features
 
@@ -245,46 +326,52 @@ def extract_all(conn: duckdb.DuckDBPyConnection, client: Anthropic, output_dir: 
 
     if not records:
         logger.info("No records need feature extraction")
-        return 0
+        retry_count = process_retry_queue(conn, client, output_dir)
+        return retry_count
 
     logger.info(f"Extracting features for {len(records)} videos")
 
-    # Open jsonlines log file
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     log_file = output_path / "features.jsonl"
 
     processed = 0
 
-    with open(log_file, 'a', encoding='utf-8') as f:
-        for i, record in enumerate(records, 1):
-            video_id = record.get("id")
-            logger.info(f"Processing {i}/{len(records)}: {video_id} - {record.get('title')}")
+    for i, record in enumerate(records, 1):
+        video_id = record.get("id")
+        logger.info(f"Processing {i}/{len(records)}: {video_id} - {record.get('title')}")
 
-            # Extract features
-            features = extract_features(record, client)
+        features = extract_features(record, client)
 
-            if features:
-                # Convert to JSON string
-                features_json = json.dumps(features)
+        if features:
+            features_json = json.dumps(features)
+            update_features(conn, video_id, features_json)
 
-                # Update database
-                update_features(conn, video_id, features_json)
-
-                # Write to log file
-                log_entry = {
-                    "video_id": video_id,
-                    "title": record.get("title"),
-                    "views": record.get("views"),
-                    "features": features
-                }
+            log_entry = {
+                "video_id": video_id,
+                "title": record.get("title"),
+                "views": record.get("views"),
+                "features": features,
+            }
+            with open(log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(log_entry) + "\n")
-                f.flush()
 
-                processed += 1
-            else:
-                logger.warning(f"Skipping video {video_id} due to extraction failure")
+            processed += 1
+        else:
+            logger.warning(f"Skipping video {video_id} due to extraction failure")
+            retry_entry = {
+                "video_id": video_id,
+                "title": record.get("title"),
+                "views": record.get("views"),
+                "transcript": record.get("transcript"),
+                "thumbnail_path": record.get("thumbnail_path"),
+                "channel_url": record.get("channel_url"),
+                "failed_at": datetime.datetime.utcnow().isoformat(),
+            }
+            with open(output_path / RETRY_QUEUE_FILENAME, "a", encoding="utf-8") as rf:
+                rf.write(json.dumps(retry_entry) + "\n")
 
     logger.info(f"Feature extraction complete: {processed} videos processed")
 
-    return processed
+    retry_count = process_retry_queue(conn, client, output_dir)
+    return processed + retry_count

@@ -1,0 +1,228 @@
+---
+name: yt-analysis
+description: Full-autopilot YouTube channel analysis — pull transcripts, extract features, synthesize a content constitution. Runs 5 phases without user intervention.
+---
+
+# yt-analysis Skill
+
+Analyze a YouTube channel catalog end-to-end: acquire transcripts → index → extract structured features with Claude → synthesize a content constitution.
+
+Runs **5 phases without user intervention**. The skill handles both runtimes automatically:
+- **Claude Code** — shell subprocesses via `python3 -c "..."` or `python3 main.py`
+- **Claude Desktop** — MCP tool calls (`pull_and_index`, `run_extraction`, `generate_constitution`)
+
+---
+
+## Invocation
+
+```
+Use the yt-analysis skill to analyze <channel_url> into <output_dir> with min_views=<n>
+```
+
+All arguments have defaults: `output_dir=./output`, `min_views=10000`.
+
+---
+
+## Phase 1 — Preflight
+
+Check all prerequisites **before touching the network or disk**. Report all failures at once — do not stop after the first.
+
+**Required checks:**
+
+1. `ANTHROPIC_API_KEY` — verify env var is set and non-empty
+2. `yt-dlp` — run `yt-dlp --version`; report version if found
+3. `ffmpeg` — run `ffmpeg -version`; required for Whisper audio extraction
+4. `whisper` — run `python3 -c "import whisper"` (optional but logged if missing; acquisition continues with VTT-only mode)
+5. **Runtime detection** — attempt `python3 -c "import mcp"` and check if MCP tool `pull_and_index` is available in the current tool list
+   - If `pull_and_index` is available: **Desktop mode**
+   - Otherwise: **Claude Code mode**
+
+**Report:**
+```
+Runtime: [Claude Code | Claude Desktop]
+ANTHROPIC_API_KEY: [set | MISSING]
+yt-dlp: [version | MISSING]
+ffmpeg: [version | MISSING]
+whisper: [available | not installed — Whisper fallback disabled]
+```
+
+**Stop condition:** Any of `ANTHROPIC_API_KEY`, `yt-dlp`, `ffmpeg` missing → report all issues, then stop. Do not proceed to Phase 2.
+
+---
+
+## Phase 2 — Acquire
+
+Pull transcripts for the channel. Whisper fallback and cookie retry are **automatic inside the acquisition functions** — no manual intervention is needed.
+
+**Claude Code:**
+```bash
+python3 -c "
+from acquire import pull_channel, build_record
+from pathlib import Path
+dirs = pull_channel('<channel_url>', '<output_dir>')
+records = [r for d in dirs if (r := build_record(d)) is not None]
+print(f'Acquired {len(records)} records')
+"
+```
+
+**Claude Desktop:**
+Call MCP tool `pull_and_index` with arguments:
+```json
+{ "channel_url": "<channel_url>", "output_dir": "<output_dir>" }
+```
+
+**What happens automatically:**
+- If a video has no VTT captions: `build_record()` calls `download_audio()` then `transcribe_with_whisper()` — no action needed
+- If yt-dlp detects a blocked/monetized/members-only video: `pull_channel()` retries with `--cookies-from-browser chrome` automatically
+- If cookie retry also fails: the video is logged and skipped; acquisition continues
+
+**Partial results are acceptable.** Phase 2 never fully fails — log the count of acquired vs. skipped videos and continue.
+
+---
+
+## Phase 3 — Index
+
+Insert acquired records into `corpus.db`. Already-present records are skipped (idempotent).
+
+**Claude Code:**
+```bash
+python3 -c "
+import duckdb
+from index import init_db, insert_records
+from acquire import pull_channel, build_record
+from pathlib import Path
+
+conn = duckdb.connect('<output_dir>/corpus.db')
+init_db(conn)
+dirs = [d for d in Path('<output_dir>').iterdir() if d.is_dir()]
+records = [r for d in dirs if (r := build_record(d)) is not None]
+inserted = insert_records(conn, records)
+print(f'Indexed {inserted} records')
+"
+```
+
+**Claude Desktop:** Already handled by `pull_and_index` in Phase 2 — skip this phase.
+
+**Stop condition:** If zero records were indexed and the output directory has no existing `corpus.db` with rows, stop and report. There is nothing to extract from an empty corpus.
+
+---
+
+## Phase 4 — Extract
+
+Extract structured features per video using Claude. Failed videos are written to `retry_queue.jsonl` and retried automatically at the end of the phase.
+
+**Claude Code:**
+```bash
+python3 -c "
+import os, duckdb
+from anthropic import Anthropic
+from extract import extract_all
+
+conn = duckdb.connect('<output_dir>/corpus.db')
+client = Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+count = extract_all(conn, client, '<output_dir>')
+print(f'Extracted features for {count} videos')
+"
+```
+
+**Claude Desktop:**
+Call MCP tool `run_extraction` with arguments:
+```json
+{ "output_dir": "<output_dir>" }
+```
+
+**After extract:** Check for `retry_queue.jsonl`:
+```bash
+python3 -c "
+from pathlib import Path
+q = Path('<output_dir>/retry_queue.jsonl')
+if q.exists():
+    lines = [l for l in q.read_text().splitlines() if l.strip()]
+    print(f'retry_queue: {len(lines)} videos still pending')
+else:
+    print('retry_queue: empty (all recovered)')
+"
+```
+
+Report the count of remaining unrecovered videos. These will persist across runs for future retries.
+
+**Warning threshold:** If >50% of videos failed extraction, log a warning and continue — do not halt. The constitution will be built from what is available.
+
+---
+
+## Phase 5 — Synthesize
+
+Aggregate top-performing videos into a content constitution document.
+
+**Claude Code:**
+```bash
+python3 -c "
+import os, duckdb
+from anthropic import Anthropic
+from synthesize import build_constitution
+
+conn = duckdb.connect('<output_dir>/corpus.db')
+client = Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+result = build_constitution(conn, client, '<output_dir>', min_views=<min_views>)
+print(f'Constitution written to {result}')
+"
+```
+
+**Claude Desktop:**
+Call MCP tool `generate_constitution` with arguments:
+```json
+{ "output_dir": "<output_dir>", "min_views": <min_views> }
+```
+
+**On failure:** Report the error. Do not re-run earlier phases — the data is in `corpus.db` and can be synthesized again independently.
+
+---
+
+## Final Summary
+
+Query `corpus.db` to populate counts, then display:
+
+```bash
+python3 -c "
+import duckdb, json
+from pathlib import Path
+
+conn = duckdb.connect('<output_dir>/corpus.db')
+total   = conn.execute('SELECT COUNT(*) FROM videos').fetchone()[0]
+vtt     = conn.execute(\"SELECT COUNT(*) FROM videos WHERE transcript IS NOT NULL AND transcript != ''\").fetchone()[0]
+feats   = conn.execute('SELECT COUNT(*) FROM videos WHERE features_json IS NOT NULL').fetchone()[0]
+
+retry_path = Path('<output_dir>/retry_queue.jsonl')
+retry_remaining = sum(1 for l in retry_path.read_text().splitlines() if l.strip()) if retry_path.exists() else 0
+
+print(f'Videos acquired:     {total}')
+print(f'Transcripts (VTT):   {vtt}')
+print(f'Features extracted:  {feats}')
+print(f'Retry remaining:     {retry_remaining}')
+"
+```
+
+Present as a table:
+
+| Metric | Count |
+|---|---|
+| Videos acquired | `<n>` |
+| VTT transcripts | `<n>` |
+| Whisper fallback | `<acquired - vtt>` |
+| Blocked / skipped | `<n>` |
+| Features extracted | `<n>` |
+| Retry recovered | `<n>` |
+| Constitution path | `<output_dir>/constitution.md` |
+| DB path | `<output_dir>/corpus.db` |
+
+---
+
+## Error Escalation Rules
+
+| Phase | Failure condition | Action |
+|---|---|---|
+| 1 (Preflight) | Any required tool missing | **Stop** — report all missing tools |
+| 2 (Acquire) | Partial failures | **Continue** — log skipped videos |
+| 3 (Index) | Zero records inserted + empty DB | **Stop** — nothing to process |
+| 4 (Extract) | >50% failure rate | **Warn + continue** — synthesize what's available |
+| 5 (Synthesize) | Any failure | **Report** — do not re-run earlier phases |
