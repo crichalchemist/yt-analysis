@@ -1,0 +1,5 @@
+yt-dlp>=2024.3.10
+webvtt-py>=0.5.1
+anthropic>=0.34.0
+duckdb>=0.10.0
+mcp>=1.0.0
