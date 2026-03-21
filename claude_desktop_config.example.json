@@ -1,10 +1,10 @@
 {
   "mcpServers": {
-    "youtube-corpus": {
-      "command": "python",
+    "yt-analysis": {
+      "command": "python3",
       "args": ["/absolute/path/to/yt-analysis/mcp_server.py"],
       "env": {
-        "ANTHROPIC_API_KEY": "your_api_key_here"
+        "ANTHROPIC_API_KEY": "sk-ant-..."
       }
     }
   }
