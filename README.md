@@ -1,91 +1,271 @@
-# yt-analysis
+# YouTube Channel Corpus Analyzer
 
-Claude + YouTube - Intelligent video analysis and transcription.
+A Python tool that analyzes entire YouTube channel catalogs by extracting transcripts, metadata, and running structured analysis via the Anthropic API to generate pattern-based constitution documents.
 
-## Quick Start
+## Features
 
-Analyze YouTube videos in 5 minutes:
+- **Data Acquisition**: Pull complete channel video catalogs with transcripts using yt-dlp
+- **Corpus Indexing**: Store and query video data using DuckDB
+- **Feature Extraction**: Analyze transcripts using Claude to extract structured patterns
+- **Visual Analysis**: Analyze thumbnails for body language, facial expressions, and visual hooks
+- **Constitution Synthesis**: Generate comprehensive markdown reports of channel patterns
+- **MCP Integration**: Use as an MCP server in Claude Desktop for interactive analysis
+
+## Requirements
+
+- Python 3.11+
+- yt-dlp (for YouTube data)
+- Anthropic API key
+
+## Installation
+
+### Quick Install (Recommended)
+
+One-line install from GitHub:
+```bash
+curl -sL https://raw.githubusercontent.com/crichalchemist/yt-analysis/main/install.sh | bash
+```
+
+Or install dependencies directly:
+```bash
+pip install -r https://raw.githubusercontent.com/crichalchemist/yt-analysis/main/requirements.txt
+```
+
+### Manual Install
+
+1. Clone the repository:
+```bash
+git clone https://github.com/crichalchemist/yt-analysis.git
+cd yt-analysis
+```
+
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+3. Set your Anthropic API key:
+```bash
+export ANTHROPIC_API_KEY="your_api_key_here"
+```
+
+## Usage
+
+### CLI Mode
+
+Run the full analysis pipeline:
 
 ```bash
-/analyze-video https://www.youtube.com/watch?v=your_video_id
+python main.py "https://www.youtube.com/@channelname" ./output --min-views 100000
 ```
 
-## Documentation
+Arguments:
+- `channel_url`: YouTube channel URL
+- `output_dir`: Directory for outputs (database, transcripts, constitution)
+- `--min-views`: Minimum view threshold for constitution (default: 100000)
 
-Choose your path:
+### MCP Server Mode (Claude Desktop)
 
-- **New users**: Read [QUICKSTART.md](QUICKSTART.md) (5 minutes)
-- **Understanding options**: Read [USAGE-GUIDE.md](USAGE-GUIDE.md) (15 minutes)
-- **Creating skills**: Read [SKILLS-GUIDE.md](SKILLS-GUIDE.md) (20 minutes)
-- **Configuring MCP**: Read [MCP-CONFIG.md](MCP-CONFIG.md) (15 minutes)
-- **Advanced topics**: Read [BEST-PRACTICES.md](BEST-PRACTICES.md) (30 minutes)
-- **Finding your way**: Read [DOCUMENTATION-INDEX.md](DOCUMENTATION-INDEX.md)
+1. Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
-## Available Skills
-
-Three ready-to-use skills are included:
-
-1. **`/analyze-video`** - Full analysis with metadata, transcript, and summary
-2. **`/download-transcript`** - Extract and save video transcripts
-3. **`/compare-videos`** - Compare insights from multiple videos
-
-## Two Integration Options
-
-### Option 1: Claude Code Skills (Simplest)
-- No setup required
-- Start immediately with `/analyze-video`
-- Perfect for workflows and procedures
-- See [QUICKSTART.md](QUICKSTART.md)
-
-### Option 2: MCP Server (Most Powerful)
-- Persistent tools in Claude Desktop
-- Full system integration
-- For complex workflows
-- See [MCP-CONFIG.md](MCP-CONFIG.md)
-
-## Setup Time
-
-- **Skills only**: 2 minutes
-- **With MCP Server**: 15 minutes
-- **Full integration**: 30 minutes
-
-## Key Features
-
-- Extract YouTube video transcripts
-- Analyze video content for key insights
-- Compare multiple videos
-- Works with manual captions for better accuracy
-- Available in Claude Code and Claude Desktop
-
-## Files
-
-```
-yt-analysis/
-├── QUICKSTART.md              # Start here
-├── USAGE-GUIDE.md             # Understand options
-├── SKILLS-GUIDE.md            # Create skills
-├── MCP-CONFIG.md              # Configure servers
-├── BEST-PRACTICES.md          # Advanced reference
-├── DOCUMENTATION-INDEX.md     # Navigation
-├── DOCUMENTATION-MAP.md       # Visual guide
-├── SETUP-SUMMARY.md           # What was created
-└── .claude/
-    └── commands/
-        ├── analyze-video.md
-        ├── download-transcript.md
-        └── compare-videos.md
+```json
+{
+  "mcpServers": {
+    "youtube-corpus": {
+      "command": "python",
+      "args": ["/absolute/path/to/yt-analysis/mcp_server.py"],
+      "env": {
+        "ANTHROPIC_API_KEY": "your_key_here"
+      }
+    }
+  }
+}
 ```
 
-## Getting Started
+2. Restart Claude Desktop
 
-1. **Read** [QUICKSTART.md](QUICKSTART.md) (5 minutes)
-2. **Try** `/analyze-video [youtube-url]`
-3. **Learn** [USAGE-GUIDE.md](USAGE-GUIDE.md) for more options
-4. **Create** custom skills following [SKILLS-GUIDE.md](SKILLS-GUIDE.md)
+3. Available MCP tools:
+   - `pull_and_index`: Pull channel and create database
+   - `run_extraction`: Extract features from videos
+   - `generate_constitution`: Create constitution markdown
+   - `query_corpus`: Run SQL queries on the corpus
+
+### Example MCP Workflow in Claude Desktop
+
+```
+1. Use pull_and_index with channel URL
+2. Use run_extraction to analyze transcripts
+3. Use generate_constitution to create report
+4. Use query_corpus to explore data with SQL
+```
+
+## Output Files
+
+The tool generates the following in the output directory:
+
+- `corpus.db` - DuckDB database with all video data
+- `features.jsonl` - JSONL log of feature extractions
+- `constitution.md` - Synthesized pattern analysis
+- `constitution_raw.json` - Raw feature data used for synthesis
+- `errors.log` - Error log for troubleshooting
+- `YYYYMMDD_VIDEOID/` - Individual video directories with transcripts and metadata
+
+## Architecture
+
+### Modules
+
+1. **acquire.py** - Data acquisition via yt-dlp
+   - `pull_channel()`: Download channel metadata and transcripts
+   - `vtt_to_text()`: Convert VTT subtitles to clean text
+   - `build_record()`: Create structured video records
+
+2. **index.py** - DuckDB corpus management
+   - `init_db()`: Initialize database schema
+   - `insert_records()`: Add video records
+   - `get_top_performers()`: Query by view threshold
+   - `get_records_without_features()`: Find unprocessed videos
+
+3. **extract.py** - Feature extraction via Anthropic API
+   - `extract_features()`: Analyze single video
+   - `extract_all()`: Batch process all videos
+
+4. **synthesize.py** - Constitution generation
+   - `build_constitution()`: Generate pattern analysis document
+
+5. **main.py** - CLI entry point
+
+6. **mcp_server.py** - MCP server wrapper
+
+### Database Schema
+
+```sql
+CREATE TABLE videos (
+    id TEXT PRIMARY KEY,
+    title TEXT,
+    date TEXT,
+    views INTEGER,
+    duration_seconds INTEGER,
+    transcript TEXT,
+    thumbnail_path TEXT,
+    channel_url TEXT,
+    features_json TEXT
+)
+```
+
+### Extracted Features
+
+For each video, the following features are extracted:
+
+**Text Analysis (from transcript):**
+- `hook_type`: question, stat, story, contrast, or void
+- `hook_text`: First two sentences of transcript
+- `structure`: Array of section labels
+- `cta_present`: Boolean for call-to-action presence
+- `emotional_arc`: flat, rise, fall, or rise-fall
+- `key_claims`: List of 3-5 main claims
+- `topic_category`: Primary topic
+- `estimated_retention_signal`: low, medium, or high
+
+**Visual Analysis (from thumbnail when available):**
+- `visual_hook_elements`: List of visual elements (text overlays, facial expressions, objects, colors)
+- `body_language`: Description of presenter's body language and emotional state
+- `visual_context`: Setting, production quality, and visual storytelling elements
+- `thumbnail_effectiveness`: low, medium, or high based on visual appeal and clarity
+
+> Note: Visual analysis automatically falls back to text-only mode if thumbnails are unavailable.
+
+### Constitution Sections
+
+The generated constitution includes:
+1. **Hook Pattern Index** - Hook types with frequency and examples
+2. **Structural Templates** - Common segment patterns with performance correlation
+3. **Topic-Performance Matrix** - Topics ranked by median views
+4. **Anomalies** - High-performers that break patterns
+5. **High-Signal Phrasing Patterns** - Language in top 20% performers
+6. **Null Hypotheses** - Frequent patterns with no view correlation
+
+## Error Handling
+
+- Missing VTT files are logged and skipped
+- API failures retry once before logging
+- Individual video failures don't halt the pipeline
+- All errors written to `errors.log` with timestamps
+
+## Cost Estimates
+
+For a typical channel with 173 videos:
+- **Text-only mode**: Input tokens: ~1.04M, Output tokens: ~173K
+- **With visual analysis**: Input tokens: ~1.2M (includes image encoding), Output tokens: ~260K
+- Synthesis: ~50K input + 4K output
+- **Estimated cost: $8-12 USD** (using Claude Sonnet 4.5 with visual analysis)
+
+Note: Consider using Anthropic's batch API for 50% cost reduction on large channels.
+
+## Advanced Usage
+
+### Query the Corpus with SQL
+
+```python
+import duckdb
+
+conn = duckdb.connect("output/corpus.db")
+
+# Get top 10 videos by views
+result = conn.execute("""
+    SELECT title, views, date
+    FROM videos
+    ORDER BY views DESC
+    LIMIT 10
+""").fetchall()
+
+print(result)
+```
+
+### Custom Feature Analysis
+
+```python
+from anthropic import Anthropic
+from index import init_db, get_all_records
+
+client = Anthropic(api_key="your_key")
+conn = init_db("output/corpus.db")
+records = get_all_records(conn)
+
+# Custom analysis on records
+for record in records:
+    # Your analysis here
+    pass
+```
+
+## Troubleshooting
+
+### yt-dlp fails
+- Ensure yt-dlp is up to date: `pip install -U yt-dlp`
+- Check channel URL is correct
+- Some videos may not have auto-generated subtitles
+
+### No transcripts extracted
+- Not all videos have auto-generated subtitles
+- Check `errors.log` for specific failures
+- Try a different channel with known subtitles
+
+### API rate limits
+- Add delays between API calls if needed
+- Consider using batch API for large channels
+
+## License
+
+MIT License - See LICENSE file for details
+
+## Contributing
+
+Pull requests welcome! Please ensure:
+- Code follows existing style
+- Error handling is comprehensive
+- Logging is informative
 
 ## Support
 
-- Issues with setup? See [USAGE-GUIDE.md](USAGE-GUIDE.md#troubleshooting)
-- Creating skills? See [SKILLS-GUIDE.md](SKILLS-GUIDE.md)
-- Advanced topics? See [BEST-PRACTICES.md](BEST-PRACTICES.md)
-- Lost? See [DOCUMENTATION-INDEX.md](DOCUMENTATION-INDEX.md)
+For issues and questions:
+- GitHub Issues: https://github.com/crichalchemist/yt-analysis/issues
+- Documentation: This README
