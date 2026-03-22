@@ -1,11 +1,34 @@
 ---
 name: yt-analysis
-description: Full-autopilot YouTube channel analysis — pull transcripts, extract features, synthesize a content constitution. Runs 5 phases without user intervention.
+description: Use when analyzing a YouTube channel's content catalog to extract patterns, understand top-performer characteristics, or build a content strategy reference from transcripts.
 ---
 
 # yt-analysis Skill
 
 Analyze a YouTube channel catalog end-to-end: acquire transcripts → index → extract structured features with Claude → synthesize a content constitution.
+
+## When to Use
+
+**Use when:**
+- You have a YouTube channel URL and want to understand what content performs best
+- Building a content constitution or style guide from an existing channel's catalog
+- Researching a channel's topic patterns, hooks, or structural tendencies at scale
+- Any analysis requiring transcripts from more than a handful of videos
+
+**Do NOT use when:**
+- Analyzing a single video (run `acquire.py` directly)
+- The channel is private or requires login beyond cookie support
+- You only need metadata (views, titles) without transcript content
+
+## Quick Reference
+
+| Phase | What it does | Failure behavior |
+|-------|-------------|-----------------|
+| 1 — Preflight | Checks env, tools, runtime | Hard stop on missing required tools |
+| 2 — Acquire | Downloads transcripts via yt-dlp | Continues — skips blocked videos |
+| 3 — Index | Inserts records into DuckDB | Hard stop if DB empty after insert |
+| 4 — Extract | Calls Claude per video for features | Warns if >50% fail; writes retry_queue.jsonl |
+| 5 — Synthesize | Builds constitution from top performers | Reports error; does not re-run earlier phases |
 
 Runs **5 phases without user intervention**. The skill handles both runtimes automatically:
 - **Claude Code** — shell subprocesses via `python3 -c "..."` or `python3 main.py`
@@ -216,6 +239,17 @@ Present as a table:
 | DB path | `<output_dir>/corpus.db` |
 
 ---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Channel URL uses `/c/` or `/user/` format | Use `/@handle` format — yt-dlp resolves it more reliably |
+| Phase 4 extracts 0 features | Check `ANTHROPIC_API_KEY` is set; check `errors.log` for rate limit or model errors |
+| `corpus.db` has rows but constitution is empty | `min_views` threshold too high — lower it or check `features_json` is populated |
+| Re-running Phase 2 re-downloads everything | It won't — `pull_channel` skips dirs that already exist; Phase 3 skips already-indexed IDs |
+| Whisper not installed, videos silently skipped | Install `openai-whisper` + `ffmpeg`; videos without VTT captions need it |
+| `retry_queue.jsonl` never clears | Persistent API failures or truncated transcripts — inspect the queue entries manually |
 
 ## Error Escalation Rules
 
